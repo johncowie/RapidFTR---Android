@@ -184,7 +184,7 @@ public class PhotoUploadBox extends BaseView implements RapidFtrActivity.ResultL
         addImageClickListener(photoGridView, photoKeys);
         if (photoKeys != null) {
             setGridAttributes(photoGridView, photoKeys);
-            photoGridView.setAdapter(new ImageAdapter(getContext(), model, photoCaptureHelper, enabled));
+            photoGridView.setAdapter(new ImageAdapter(getContext(), model, photoCaptureHelper));
         }
     }
 

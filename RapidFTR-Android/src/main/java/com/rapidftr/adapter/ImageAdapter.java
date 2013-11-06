@@ -7,7 +7,6 @@ import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.ImageView;
 import com.rapidftr.model.BaseModel;
-import com.rapidftr.model.Child;
 import com.rapidftr.utils.PhotoCaptureHelper;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -19,13 +18,11 @@ public class ImageAdapter extends BaseAdapter {
 	public static final int NO_PADDING = 0;
 
 	private final BaseModel model;
-    private final boolean enabled;
     private final PhotoCaptureHelper photoCaptureHelper;
     private final Context context;
 
-    public ImageAdapter(Context context, BaseModel model, PhotoCaptureHelper photoCaptureHelper, boolean enabled) {
+    public ImageAdapter(Context context, BaseModel model, PhotoCaptureHelper photoCaptureHelper) {
         this.model = model;
-        this.enabled = enabled;
         this.photoCaptureHelper = photoCaptureHelper;
         this.context = context;
     }

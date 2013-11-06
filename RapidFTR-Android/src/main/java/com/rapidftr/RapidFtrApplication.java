@@ -29,7 +29,6 @@ import java.util.List;
 
 public class RapidFtrApplication extends Application {
 
-
     public static final String SHARED_PREFERENCES_FILE = "RAPIDFTR_PREFERENCES";
     public static final String APP_IDENTIFIER = "RapidFTR";
 	public static final ObjectMapper JSON_MAPPER = new ObjectMapper();
