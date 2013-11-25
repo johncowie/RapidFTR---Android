@@ -1,14 +1,19 @@
 package com.rapidftr.activity;
 
+import com.rapidftr.R;
 import com.rapidftr.RapidFtrApplication;
+import com.rapidftr.model.Child;
 import com.rapidftr.model.Enquiry;
+import com.rapidftr.repository.ChildRepository;
 import com.rapidftr.repository.EnquiryRepository;
+import com.rapidftr.repository.FailedToSaveException;
 import junit.framework.Assert;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 public class ViewEnquiryActivityTest extends BaseActivityIntegrationTest {
     EnquiryRepository repository;
+    ChildRepository childRepository;
 
     @Override
     public void setUp() throws Exception {
@@ -17,6 +22,7 @@ public class ViewEnquiryActivityTest extends BaseActivityIntegrationTest {
         Assert.assertTrue(solo.waitForText("Login Successful"));
         waitUntilTextDisappears("Login Successful");
         repository = RapidFtrApplication.getApplicationInstance().getInjector().getInstance(EnquiryRepository.class);
+        childRepository = RapidFtrApplication.getApplicationInstance().getInjector().getInstance(ChildRepository.class);
     }
 
     @Override
@@ -24,13 +30,17 @@ public class ViewEnquiryActivityTest extends BaseActivityIntegrationTest {
         super.tearDown();
     }
 
-    public void testShowEnquiry() throws JSONException {
-        Enquiry enquiry = new Enquiry("CREATEDBY", "Enq1Reportername", new JSONObject("{enquirer_name:Enq1Reportername}"));
-        enquiry.put("f9e9ad8c", "01/01/01"); // Hardcoded key till enquiry form sections can be synced
+    public void testShowEnquiry() throws Exception {
+        String enquiryJSON = "{ " +
+                "\"enquirer_name\":\"Tom Cruise\", " +
+                "\"name\":\"Matthew\"," +
+                String.format("\"created_by\":\"%s\",", application.getCurrentUser().getUserName()) +
+                "\"synced\" : \"false\"}";
+
+        Enquiry enquiry = new Enquiry(enquiryJSON);
         repository.createOrUpdate(enquiry);
-        enquiry = repository.get(enquiry.getUniqueId());
         viewEnquiryPage.navigateToPage(enquiry.getEnquirerName());
         viewEnquiryPage.validateData(enquiry);
-        assertTrue(solo.searchText("01/01/01"));
     }
+
 }

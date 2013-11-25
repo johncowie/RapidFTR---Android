@@ -12,15 +12,19 @@ import com.rapidftr.repository.EnquiryRepository;
 import com.rapidftr.task.AsyncTaskWithDialog;
 import lombok.Cleanup;
 import org.codehaus.jackson.map.ObjectMapper;
+import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.Arrays;
 
 public abstract class BaseEnquiryActivity extends CollectionActivity {
     protected Enquiry enquiry;
+    protected EnquiryRepository enquiryRepository;
     public static final ObjectMapper JSON_MAPPER = new ObjectMapper();
     protected boolean editable = true;
 
@@ -34,23 +38,40 @@ public abstract class BaseEnquiryActivity extends CollectionActivity {
         return enquiry;
     }
 
+    @Override
+    public void onCreate(Bundle savedInstanceState){
+        enquiryRepository = inject(EnquiryRepository.class);
+        super.onCreate(savedInstanceState);
+    }
 
     protected void initializeData(Bundle savedInstanceState) throws JSONException, IOException {
         enquiry = new Enquiry();
         @Cleanup InputStream in = getResources().openRawResource(R.raw.enquiry_form_sections);
-        String x = CharStreams.toString(new InputStreamReader(in));
-        formSections = Arrays.asList(JSON_MAPPER.readValue(x, FormSection[].class));
+        String formSectionJSON = CharStreams.toString(new InputStreamReader(in));
+        formSections = new ArrayList<FormSection>(Arrays.asList(JSON_MAPPER.readValue(formSectionJSON, FormSection[].class)));
     }
 
-    protected Enquiry load() throws JSONException {
-        @Cleanup EnquiryRepository repository = inject(EnquiryRepository.class);
-        String enquiryId = getIntent().getExtras().getString("id");
-        enquiry = repository.get(enquiryId);
+    protected Enquiry loadEnquiry(Bundle bundle, EnquiryRepository enquiryRepository) throws JSONException {
+        String enquiryId = bundle.getString("id");
+        Enquiry retrievedEnquiry = enquiryRepository.get(enquiryId);
+        enquiryRepository.close();
+        
+        JSONObject criteria = (JSONObject) retrievedEnquiry.remove("criteria");
+
+        return addCriteriaKeysAndValuesToEnquiry(retrievedEnquiry, criteria);
+    }
+
+    private Enquiry addCriteriaKeysAndValuesToEnquiry(Enquiry enquiry, JSONObject criteria) throws JSONException {
+        JSONArray criteriaKeys = criteria.names();
+        for (int i = 0; i < criteriaKeys.length(); i++) {
+            String key = criteriaKeys.get(i).toString();
+            enquiry.put(key, criteria.get(key).toString());
+        }
         return enquiry;
     }
 
-    public Enquiry save(View view){
-        if ( enquiry.isValid()){
+    public Enquiry save(View view) {
+        if (enquiry.isValid()) {
             AsyncTaskWithDialog.wrap(this, new SaveEnquiryTask(), R.string.save_enquiry_progress, R.string.save_enqury_success, R.string.save_enquiry_failed).execute();
             return enquiry;
         } else {
@@ -67,9 +88,9 @@ public abstract class BaseEnquiryActivity extends CollectionActivity {
 
         @Override
         protected Enquiry doInBackground(Void... params) {
-            try{
+            try {
                 return saveEnquiry();
-            }catch (Exception e){
+            } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         }
@@ -87,10 +108,10 @@ public abstract class BaseEnquiryActivity extends CollectionActivity {
         startActivity(intent);
     }
 
-    private Enquiry saveEnquiry() throws JSONException {
+    private Enquiry saveEnquiry() throws Exception {
         @Cleanup EnquiryRepository repository = inject(EnquiryRepository.class);
         if (enquiry.isNew()) {
-            enquiry.setOwner(getCurrentUser().getUserName());
+            enquiry.setCreatedBy(getCurrentUser().getUserName());
             enquiry.setOrganisation(getCurrentUser().getOrganisation());
         }
         repository.createOrUpdate(enquiry);

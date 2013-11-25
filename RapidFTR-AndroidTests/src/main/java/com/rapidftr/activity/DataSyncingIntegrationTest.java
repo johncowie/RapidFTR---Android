@@ -1,98 +1,142 @@
 package com.rapidftr.activity;
 
-import android.view.KeyEvent;
 import com.rapidftr.R;
 import com.rapidftr.activity.pages.LoginPage;
 import com.rapidftr.model.Child;
+import com.rapidftr.model.Enquiry;
 import com.rapidftr.repository.ChildRepository;
-import com.rapidftr.test.utils.RapidFTRDatabase;
+import com.rapidftr.repository.EnquiryRepository;
 import org.apache.http.params.HttpConnectionParams;
 import org.json.JSONException;
 
 import java.io.IOException;
-import java.util.List;
+import java.util.UUID;
 
 import static com.rapidftr.utils.RapidFtrDateTime.now;
 import static com.rapidftr.utils.http.FluentRequest.http;
 
 public class DataSyncingIntegrationTest extends BaseActivityIntegrationTest {
 
-    ChildRepository repository;
+    private static final long SYNC_TIMEOUT = 120000; // 2 min
+
+    ChildRepository childRepository;
+    EnquiryRepository enquiryRepository;
+    String userName;
 
     @Override
     public void setUp() throws Exception {
         super.setUp();
         loginPage.login();
         solo.waitForText("Login Successful");
-        repository = application.getInjector().getInstance(ChildRepository.class);
-        RapidFTRDatabase.deleteChildren();
+        enquiryRepository = application.getInjector().getInstance(EnquiryRepository.class);
+        childRepository = application.getInjector().getInstance(ChildRepository.class);
+        userName = application.getCurrentUser().getUserName();
+        deleteRecordsOnServer("children");
+        deleteRecordsOnServer("enquiries");
     }
 
     @Override
     public void tearDown() throws Exception {
         try {
-            repository.close();
+            childRepository.close();
+            enquiryRepository.close();
         } catch (Exception e) {
         } finally {
             super.tearDown();
         }
     }
 
-    //commenting for  sync fail
-    public void estRecordIsSuccessfullyDownloadedFromServer() throws JSONException, IOException, InterruptedException {
+    public void testSyncShouldUpdateRecordsAndAttachMatchingChildRecordsToEnquiry() throws Exception {
         String timeStamp = now().defaultFormat();
-        seedDataOnServer(new Child(String.format("{ '_id' : '123456', 'timeStamp' : '%s', 'test2' : 'value2', 'unique_identifier' : 'abcd1234', 'one' : '1', 'name' : 'jen' }", timeStamp)));
-        solo.clickOnMenuItem(solo.getString(R.string.synchronize_all));
-        solo.sleep(20000);
-//         waitUntilSyncCompletion();
-        Child child = repository.get("abcd1234");
-        assertEquals("123456", child.optString("_id"));
+        String childId = UUID.randomUUID().toString();
+        String childName = UUID.randomUUID().toString().substring(0, 6);
+        Child childToStore = new Child(String.format("{'unique_identifier':'%s', 'timeStamp':'%s', 'nationality':'ugandan', 'one':'1', 'name':'%s' }", childId, timeStamp, childName));
+        seedChildOnServer(childToStore);
+
+        String enquiryJSON = String.format("{ \"enquirer_name\":\"Tom Cruise\", \"name\":\"%s\"," +
+                "\"nationality\":\"ugandan\",\"synced\" : \"false\"}", childName);
+
+        Enquiry enquiryToSync = new Enquiry(enquiryJSON);
+        enquiryToSync.setCreatedBy(application.getCurrentUser().getUserName());
+        enquiryRepository.createOrUpdate(enquiryToSync);
+
+        synchronizeAllRecords();
+
+        Enquiry enquiry = enquiryRepository.get(enquiryToSync.getUniqueId());
+
+        Child child = childRepository.get(childId);
+
+        assertTrue(enquiry.getPotentialMatchingIds().contains(child.getInternalId()));
+        recordsShouldBeSynced(child, enquiry);
+
         searchPage.navigateToSearchTab();
-        searchPage.searchChild(child.optString("unique_identifier"));
-        assertTrue(searchPage.isChildPresent(child.optString("unique_identifier"), "jen"));
+        searchPage.searchChild(childName);
+        searchPage.clickSearch();
+        assertTrue(searchPage.isChildPresent(child.getName(), childName));
     }
 
-    //commenting for  sync fail
-    public void estRecordShouldBeUploadedToServer() throws JSONException, InterruptedException {
+    public void testShouldGetRecordsUpdatedOnTheServerAfterSync() throws Exception {
+        String timeStamp = now().defaultFormat();
+        String childName = UUID.randomUUID().toString().substring(0, 6);
+        String childJSON = String.format("{'created_by' : '%s', 'timeStamp' : '%s', 'nationality' : 'uganda', 'name' : '%s' }", userName, timeStamp, childName);
 
-        Child childToBeSynced = new Child(getAlphaNumeric(6), "admin", "{'name' : 'moses'}");
-        repository.createOrUpdate(childToBeSynced);
-        assertFalse(childToBeSynced.isSynced());
+        Child child = new Child(childJSON);
+        String enquiryJSON = String.format("{'created_by' : '%s', 'enquirer_name' : 'Wire', 'name' : 'Alex', 'synced' : 'false'}", userName);
+        Enquiry enquiry = new Enquiry(enquiryJSON);
+
+        childRepository.createOrUpdate(child);
+        enquiryRepository.createOrUpdate(enquiry);
+
+        recordsShouldNotHaveInternalIds(child, enquiry);
+
+        synchronizeAllRecords();
+
+        String childUniqueId = child.getUniqueId();
+        Child childAfterSync = childRepository.get(childUniqueId);
+        Enquiry enquiryAfterSync = enquiryRepository.get(enquiry.getUniqueId());
+
+        recordsShouldHaveInternalIds(childAfterSync, enquiryAfterSync);
+        recordsShouldBeSynced(childAfterSync, enquiryAfterSync);
+
+        String updatedChildJSON = String.format("{'_id' : '%s' ,'created_by' : '%s', 'nationality' : 'uganda', 'name' : 'Albert', 'gender' : 'male' }", childAfterSync.getInternalId(), userName);
+        updateRecordOnServer(new Child(updatedChildJSON));
+
+        String enquiryUniqueId = enquiry.getUniqueId();
+        String updatedEnquiryJSON = String.format("{'created_by' : '%s', 'enquirer_name' : 'James Wire', 'nationality' : 'uganda', 'unique_identifier' : '%s'}", userName, enquiryUniqueId);
+        enquiryRepository.createOrUpdate(new Enquiry(updatedEnquiryJSON));
+        Enquiry enquiryAfterUpdate = enquiryRepository.get(enquiryUniqueId);
+
+        assertEquals("James Wire", enquiryAfterUpdate.getEnquirerName());
+        assertEquals("", enquiryAfterUpdate.getPotentialMatchingIds());
+
+        synchronizeAllRecords();
+
+        viewEnquiryPage.navigateToPage(enquiryAfterUpdate.getEnquirerName());
+        viewEnquiryPage.isChildPresent(childUniqueId);
+    }
+
+    private void recordsShouldBeSynced(Child childAfterSync, Enquiry enquiryAfterSync) {
+        assertTrue(childAfterSync.isSynced());
+        assertTrue(enquiryAfterSync.isSynced());
+    }
+
+    private void recordsShouldHaveInternalIds(Child childAfterSync, Enquiry enquiryAfterSync) throws JSONException {
+        assertNotNull(childAfterSync.getInternalId());
+        assertNotNull(enquiryAfterSync.getInternalId());
+    }
+
+    private void synchronizeAllRecords() throws JSONException {
         solo.clickOnMenuItem(solo.getString(R.string.synchronize_all));
-//        waitUntilSyncCompletion();
-        solo.sleep(30000); //Sleep for synchronization to happen.
-        assertTrue(repository.exists(childToBeSynced.getUniqueId()));
-        List<Child> children = repository.getMatchingChildren(childToBeSynced.getUniqueId());
-        assertEquals(1, children.size());
-        assertTrue(children.get(0).isSynced());
+        solo.waitForText("Records Successfully Synchronized");
+        waitUntilRecordsAreSynced();
     }
 
-
-
-    public void estSynchronizationShouldCancelIfTheUserIsLoggingOutFromTheApplication() throws JSONException, InterruptedException {
-        Child child1 = new Child("abc4321", "admin", "{'name' : 'moses'}");
-        Child child2 = new Child("qwe4321", "admin", "{'name' : 'james'}");
-        Child child3 = new Child("zxy4321", "admin", "{'name' : 'kenyata'}");
-        Child child4 = new Child("uye4321", "admin", "{'name' : 'keburingi'}");
-        seedDataToRepository(child1, child2, child3, child4);
-        solo.clickOnMenuItem(solo.getString(R.string.synchronize_all));
-        solo.sleep(1000);
-        solo.clickOnMenuItem(solo.getString(R.string.log_out));
-        assertTrue("Could not find the dialog!", solo.searchText(solo.getString(R.string.confirm_logout_message)));
-        //Robotium doesn't support asserting on notification bar by default. Below is the hack to get around it.
-        solo.clickOnButton(solo.getString(R.string.log_out)); //As the synchronization is still happening we'll get an dialog box for the user action.
-        solo.waitForText(solo.getString(R.string.logout_successful));
+    private void recordsShouldNotHaveInternalIds(Child child, Enquiry enquiry) throws JSONException {
+        assertNull(child.getInternalId());
+        assertNull(enquiry.getInternalId());
     }
 
-
-    public void seedDataToRepository(Child... children) throws JSONException {
-        for (Child child : children) {
-            repository = application.getInjector().getInstance(ChildRepository.class);
-            repository.createOrUpdate(child);
-        }
-    }
-
-    public void seedDataOnServer(Child child) throws JSONException, IOException {
+    private void seedChildOnServer(Child child) throws JSONException, IOException {
         http()
                 .context(application)
                 .host(LoginPage.LOGIN_URL)
@@ -102,17 +146,33 @@ public class DataSyncingIntegrationTest extends BaseActivityIntegrationTest {
                 .post();
     }
 
-    public void waitUntilSyncCompletion() {
+    private void updateRecordOnServer(Child child) throws JSONException, IOException {
+        http()
+                .context(application)
+                .host(LoginPage.LOGIN_URL)
+                .config(HttpConnectionParams.CONNECTION_TIMEOUT, 15000)
+                .path(String.format("/api/children/%s", child.getInternalId()))
+                .param("child", child.values().toString())
+                .putWithMultiPart();
+    }
 
-        for(int i=0;i<10;i++){
-            solo.sendKey(KeyEvent.KEYCODE_MENU);
-            if(solo.searchText("Synchronize All",false)){
-                solo.sleep(10);
-            }else{
-                break;
-            }
+    private void deleteRecordsOnServer(String records) throws JSONException, IOException {
+        http()
+                .context(application)
+                .host(LoginPage.LOGIN_URL)
+                .config(HttpConnectionParams.CONNECTION_TIMEOUT, 15000)
+                .path(String.format("/api/%s/destroy_all", records))
+                .delete();
+    }
+
+    private void waitUntilRecordsAreSynced() throws JSONException {
+        long endSyncTime = System.currentTimeMillis() + SYNC_TIMEOUT;
+
+        while (System.currentTimeMillis() < endSyncTime) {
+            continue;
         }
     }
 
 
 }
+
